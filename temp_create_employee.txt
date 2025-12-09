@@ -1,0 +1,45 @@
+  Future<http.Response> createEmployee(
+    Map<String, dynamic> formData, Map<String, File?> docs) async {
+    print("=" * 80);
+    print("CREATE EMPLOYEE API CALL STARTED");
+    print("=" * 80);
+    
+    try {
+      var request = http.MultipartRequest(
+          "POST", Uri.parse("${baseUrl}api/employee/create/"));
+
+      request.headers["Accept"] = "application/json";
+      request.headers["ngrok-skip-browser-warning"] = "true";
+
+      print("Adding form fields...");
+      
+      formData.forEach((key, value) {
+        if (value != null) {
+          if (value is Map) {
+            request.fields[key] = json.encode(value);
+          } else {
+            request.fields[key] = value.toString();
+          }
+        }
+      });
+      
+      print("Added ${request.fields.length} form fields");
+      print("Sending multipart request");
+      
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
+
+      print("RESPONSE RECEIVED");
+      print("Status Code: ${response.statusCode}");
+      print("Response Body: ${response.body}");
+      print("=" * 80);
+
+      return response;
+    } catch (e, stackTrace) {
+      print("CREATE EMPLOYEE EXCEPTION: $e");
+      return http.Response(
+        json.encode({"error": e.toString()}), 
+        500
+      );
+    }
+  }
