@@ -1,11 +1,13 @@
-import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 import '../services/employee_api_service.dart';
 import '../services/organization_api_service.dart';
 import '../services/department_api_service.dart';
+import '../utils/platform_file.dart';
 
 class EditEmployeeForm extends StatefulWidget {
   final Map<String, dynamic> employee;
@@ -29,6 +31,7 @@ class _EditEmployeeFormState extends State<EditEmployeeForm> {
   late TextEditingController middleName;
   late TextEditingController lastName;
   late TextEditingController email;
+  late TextEditingController password;
   late TextEditingController mobileNumber;
   late TextEditingController dob;
   late TextEditingController doj;
@@ -63,6 +66,16 @@ class _EditEmployeeFormState extends State<EditEmployeeForm> {
   List<dynamic> shifts = [];
   List<dynamic> reportingManagers = [];
 
+  // Document Files
+  CustomPlatformFile? adharCard;
+  CustomPlatformFile? panCard;
+  CustomPlatformFile? bankBook;
+  CustomPlatformFile? xStandardMarksheet;
+  CustomPlatformFile? xiiStandardMarksheet;
+  CustomPlatformFile? degree;
+  CustomPlatformFile? experienceLetter;
+  CustomPlatformFile? photo;
+
   String? employeeId;
 
   @override
@@ -78,6 +91,7 @@ class _EditEmployeeFormState extends State<EditEmployeeForm> {
     middleName = TextEditingController();
     lastName = TextEditingController();
     email = TextEditingController();
+    password = TextEditingController();
     mobileNumber = TextEditingController();
     dob = TextEditingController();
     doj = TextEditingController();
@@ -103,6 +117,7 @@ class _EditEmployeeFormState extends State<EditEmployeeForm> {
     middleName.text = emp['middleName']?.toString() ?? '';
     lastName.text = emp['lastName']?.toString() ?? '';
     email.text = emp['email']?.toString() ?? '';
+    password.text = ''; // Don't pre-fill password for security
     mobileNumber.text = emp['mobileNumber']?.toString() ?? '';
     dob.text = emp['dob']?.toString() ?? '';
     doj.text = emp['doj']?.toString() ?? '';
@@ -168,10 +183,10 @@ class _EditEmployeeFormState extends State<EditEmployeeForm> {
       final mgrs = await employeeService.getReportingManagers();
       
       setState(() {
-        organizations = orgs is List ? orgs : [];
-        departments = depts is List ? depts : [];
-        shifts = shfts is List ? shfts : [];
-        reportingManagers = mgrs is List ? mgrs : [];
+        organizations = orgs;
+        departments = depts;
+        shifts = shfts;
+        reportingManagers = mgrs;
         _isLoading = false;
         _dropdownsLoaded = true;
       });
@@ -232,6 +247,77 @@ class _EditEmployeeFormState extends State<EditEmployeeForm> {
         pCountry.text = country.text;
       }
     });
+  }
+
+  // Pick document files (PDF, DOC, images, etc.)
+  Future<CustomPlatformFile?> pickDocument() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'],
+        withData: true, // Always load file data for cross-platform compatibility
+        allowMultiple: false,
+      );
+      
+      if (result != null && result.files.isNotEmpty) {
+        final pickedFile = CustomPlatformFile.fromPickerFile(result.files.first);
+        if (pickedFile != null) {
+          _showSnackBar("Document selected: ${pickedFile.name}");
+          return pickedFile;
+        }
+      }
+      return null;
+    } catch (e) {
+      print("❌ Error picking document: $e");
+      _showSnackBar("Error picking document: $e", isError: true);
+      return null;
+    }
+  }
+
+  // Pick photo/image
+  Future<CustomPlatformFile?> pickPhoto() async {
+    try {
+      if (kIsWeb) {
+        // For web, use FilePicker for images too
+        final result = await FilePicker.platform.pickFiles(
+          type: FileType.image,
+          withData: true,
+          allowMultiple: false,
+        );
+        
+        if (result != null && result.files.isNotEmpty) {
+          final pickedFile = CustomPlatformFile.fromPickerFile(result.files.first);
+          if (pickedFile != null) {
+            _showSnackBar("Photo selected: ${pickedFile.name}");
+            return pickedFile;
+          }
+        }
+        return null;
+      } else {
+        // For mobile/desktop, use ImagePicker
+        final picker = ImagePicker();
+        final picked = await picker.pickImage(
+          source: ImageSource.gallery,
+          imageQuality: 70,
+        );
+        if (picked != null) {
+          final bytes = await picked.readAsBytes();
+          final platformFile = CustomPlatformFile(
+            name: picked.name,
+            path: picked.path,
+            bytes: bytes,
+            isWeb: false,
+          );
+          _showSnackBar("Photo selected: ${platformFile.name}");
+          return platformFile;
+        }
+        return null;
+      }
+    } catch (e) {
+      print("❌ Error picking photo: $e");
+      _showSnackBar("Error picking photo: $e", isError: true);
+      return null;
+    }
   }
 
   @override
@@ -302,6 +388,15 @@ class _EditEmployeeFormState extends State<EditEmployeeForm> {
                         keyboardType: TextInputType.emailAddress,
                         validator: (v) =>
                             v!.trim().isEmpty || !v.contains("@") ? "Invalid email" : null,
+                      ),
+                      SizedBox(height: 16),
+                      _buildTextField(
+                        password,
+                        "New Password (leave empty to keep current)",
+                        Icons.lock_outlined,
+                        obscureText: true,
+                        validator: (v) =>
+                            v!.trim().isNotEmpty && v.length < 6 ? "Password must be at least 6 characters" : null,
                       ),
                       SizedBox(height: 16),
                       _buildTextField(
@@ -518,6 +613,19 @@ class _EditEmployeeFormState extends State<EditEmployeeForm> {
                       ),
                     ]),
 
+                    SizedBox(height: 24),
+                    _buildSectionHeader("Upload Documents", Icons.upload_file),
+                    _buildCard([
+                      _buildFilePicker("Aadhar Card", adharCard, "adharCard"),
+                      _buildFilePicker("PAN Card", panCard, "panCard"),
+                      _buildFilePicker("Bank Book", bankBook, "bankBook"),
+                      _buildFilePicker("10th Marksheet", xStandardMarksheet, "xStandardMarksheet"),
+                      _buildFilePicker("12th Marksheet", xiiStandardMarksheet, "xiiStandardMarksheet"),
+                      _buildFilePicker("Degree", degree, "degree"),
+                      _buildFilePicker("Experience Letter", experienceLetter, "experienceLetter"),
+                      _buildFilePicker("Photo", photo, "photo"),
+                    ]),
+
                     SizedBox(height: 32),
                     SizedBox(
                       width: double.infinity,
@@ -612,11 +720,13 @@ class _EditEmployeeFormState extends State<EditEmployeeForm> {
     IconData icon, {
     TextInputType? keyboardType,
     String? Function(String?)? validator,
+    bool obscureText = false,
   }) {
     return TextFormField(
       controller: controller,
       keyboardType: keyboardType,
       validator: validator,
+      obscureText: obscureText,
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon, color: Color(0xFF2E7D32), size: 20),
@@ -750,6 +860,95 @@ class _EditEmployeeFormState extends State<EditEmployeeForm> {
     );
   }
 
+  Widget _buildFilePicker(String label, CustomPlatformFile? file, String fileType) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: 16),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 15,
+                color: Color(0xFF475569),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          file != null
+              ? Row(
+                  children: [
+                    Icon(Icons.check_circle, color: Colors.green, size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      file.name.length > 20 
+                          ? '${file.name.substring(0, 20)}...' 
+                          : file.name,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                    SizedBox(width: 8),
+                    TextButton(
+                      onPressed: () {
+                        setState(() {
+                          switch (fileType) {
+                            case "adharCard": adharCard = null; break;
+                            case "panCard": panCard = null; break;
+                            case "bankBook": bankBook = null; break;
+                            case "xStandardMarksheet": xStandardMarksheet = null; break;
+                            case "xiiStandardMarksheet": xiiStandardMarksheet = null; break;
+                            case "degree": degree = null; break;
+                            case "experienceLetter": experienceLetter = null; break;
+                            case "photo": photo = null; break;
+                          }
+                        });
+                      },
+                      child: Text("Remove", style: TextStyle(color: Colors.red)),
+                    ),
+                  ],
+                )
+              : OutlinedButton.icon(
+                  icon: Icon(Icons.upload_file, size: 18),
+                  label: Text("Choose"),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Color(0xFF2E7D32),
+                    side: BorderSide(color: Color(0xFF2E7D32)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  onPressed: () async {
+                    // Use different picker for photo vs documents
+                    CustomPlatformFile? pickedFile;
+                    if (fileType == "photo") {
+                      pickedFile = await pickPhoto();
+                    } else {
+                      pickedFile = await pickDocument();
+                    }
+                    
+                    if (pickedFile != null) {
+                      setState(() {
+                        switch (fileType) {
+                          case "adharCard": adharCard = pickedFile; break;
+                          case "panCard": panCard = pickedFile; break;
+                          case "bankBook": bankBook = pickedFile; break;
+                          case "xStandardMarksheet": xStandardMarksheet = pickedFile; break;
+                          case "xiiStandardMarksheet": xiiStandardMarksheet = pickedFile; break;
+                          case "degree": degree = pickedFile; break;
+                          case "experienceLetter": experienceLetter = pickedFile; break;
+                          case "photo": photo = pickedFile; break;
+                        }
+                      });
+                    }
+                  },
+                ),
+        ],
+      ),
+    );
+  }
+
   void updateEmployee() async {
     if (!_formKey.currentState!.validate()) {
       _showSnackBar("Please fill all required fields", isError: true);
@@ -764,56 +963,140 @@ class _EditEmployeeFormState extends State<EditEmployeeForm> {
     setState(() => _isLoading = true);
 
     try {
-      Map<String, dynamic> currentAddress = {
-        "street": street.text.trim(),
-        "city": city.text.trim(),
-        "state": state.text.trim(),
-        "zip": zip.text.trim(),
-        "country": country.text.trim(),
-      };
+      // Check if any files are selected
+      bool hasFiles = adharCard != null || panCard != null || bankBook != null || 
+                     xStandardMarksheet != null || xiiStandardMarksheet != null || 
+                     degree != null || experienceLetter != null || photo != null;
 
-      Map<String, dynamic> permanentAddress = {
-        "street": pStreet.text.trim(),
-        "city": pCity.text.trim(),
-        "state": pState.text.trim(),
-        "zip": pZip.text.trim(),
-        "country": pCountry.text.trim(),
-      };
+      if (hasFiles) {
+        // Use multipart update for file uploads
+        Map<String, dynamic> formData = {
+          // Personal Info
+          "firstName": firstName.text.trim(),
+          "lastName": lastName.text.trim(),
+          "email": email.text.trim(),
+          "mobileNumber": mobileNumber.text.trim(),
+          "gender": selectedGender,
+          "dob": dob.text.trim(),
+          "doj": doj.text.trim(),
+          "status": selectedStatus,
+          "role": selectedRole,
+          "designationId": designationId.text.trim(),
+          
+          // Organization references
+          "organizationId": selectedOrg,
+          "departmentId": selectedDept,
+          "shiftId": selectedShift,
+          
+          // Flattened current address (Django backend restructures these)
+          "currentAddress.street": street.text.trim(),
+          "currentAddress.city": city.text.trim(),
+          "currentAddress.state": state.text.trim(),
+          "currentAddress.zip": zip.text.trim(),
+          "currentAddress.country": country.text.trim(),
+          
+          // Flattened permanent address
+          "permanentAddress.street": pStreet.text.trim(),
+          "permanentAddress.city": pCity.text.trim(),
+          "permanentAddress.state": pState.text.trim(),
+          "permanentAddress.zip": pZip.text.trim(),
+          "permanentAddress.country": pCountry.text.trim(),
+        };
 
-      Map<String, dynamic> formData = {
-        "firstName": firstName.text.trim(),
-        "lastName": lastName.text.trim(),
-        "email": email.text.trim(),
-        "mobileNumber": mobileNumber.text.trim(),
-        "gender": selectedGender,
-        "dob": dob.text.trim(),
-        "doj": doj.text.trim(),
-        "status": selectedStatus,
-        "role": selectedRole,
-        "designationId": designationId.text.trim(),
-        "organizationId": selectedOrg,
-        "departmentId": selectedDept,
-        "shiftId": selectedShift,
-        "currentAddress": json.encode(currentAddress),
-        "permanentAddress": json.encode(permanentAddress),
-      };
+        // Add optional fields
+        if (middleName.text.trim().isNotEmpty) {
+          formData["middleName"] = middleName.text.trim();
+        }
+        if (password.text.trim().isNotEmpty) {
+          formData["password"] = password.text.trim();
+        }
+        if (selectedReportingManager != null) {
+          formData["reportingManager"] = selectedReportingManager;
+        }
 
-      if (middleName.text.trim().isNotEmpty) {
-        formData["middleName"] = middleName.text.trim();
-      }
-      if (selectedReportingManager != null) {
-        formData["reportingManager"] = selectedReportingManager;
-      }
+        // Prepare documents
+        Map<String, CustomPlatformFile?> docs = {};
+        if (adharCard != null) docs["adharCard"] = adharCard;
+        if (panCard != null) docs["panCard"] = panCard;
+        if (bankBook != null) docs["bankBook"] = bankBook;
+        if (xStandardMarksheet != null) docs["xStandardMarksheet"] = xStandardMarksheet;
+        if (xiiStandardMarksheet != null) docs["xiiStandardMarksheet"] = xiiStandardMarksheet;
+        if (degree != null) docs["degree"] = degree;
+        if (experienceLetter != null) docs["experienceLetter"] = experienceLetter;
+        if (photo != null) docs["photo"] = photo;
 
-      final response = await employeeService.updateEmployee(employeeId!, formData);
+        // Call multipart API
+        var response = await employeeService.updateEmployeeWithFiles(employeeId!, formData, docs);
 
-      setState(() => _isLoading = false);
+        setState(() => _isLoading = false);
 
-      if (response != null) {
-        _showSnackBar("✅ Employee Updated Successfully");
-        Navigator.pop(context, true);
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          _showSnackBar("✅ Employee Updated Successfully");
+          Navigator.pop(context, true);
+        } else {
+          try {
+            final errorData = json.decode(response.body);
+            _showSnackBar("❌ Failed: ${errorData['message'] ?? 'Unknown error'}", isError: true);
+          } catch (e) {
+            _showSnackBar("❌ Failed: ${response.statusCode} ${response.reasonPhrase}", isError: true);
+          }
+        }
       } else {
-        _showSnackBar("❌ Failed to update employee", isError: true);
+        // Use regular JSON update when no files
+        Map<String, dynamic> currentAddress = {
+          "street": street.text.trim(),
+          "city": city.text.trim(),
+          "state": state.text.trim(),
+          "zip": zip.text.trim(),
+          "country": country.text.trim(),
+        };
+
+        Map<String, dynamic> permanentAddress = {
+          "street": pStreet.text.trim(),
+          "city": pCity.text.trim(),
+          "state": pState.text.trim(),
+          "zip": pZip.text.trim(),
+          "country": pCountry.text.trim(),
+        };
+
+        Map<String, dynamic> formData = {
+          "firstName": firstName.text.trim(),
+          "lastName": lastName.text.trim(),
+          "email": email.text.trim(),
+          "mobileNumber": mobileNumber.text.trim(),
+          "gender": selectedGender,
+          "dob": dob.text.trim(),
+          "doj": doj.text.trim(),
+          "status": selectedStatus,
+          "role": selectedRole,
+          "designationId": designationId.text.trim(),
+          "organizationId": selectedOrg,
+          "departmentId": selectedDept,
+          "shiftId": selectedShift,
+          "currentAddress": json.encode(currentAddress),
+          "permanentAddress": json.encode(permanentAddress),
+        };
+
+        if (middleName.text.trim().isNotEmpty) {
+          formData["middleName"] = middleName.text.trim();
+        }
+        if (password.text.trim().isNotEmpty) {
+          formData["password"] = password.text.trim();
+        }
+        if (selectedReportingManager != null) {
+          formData["reportingManager"] = selectedReportingManager;
+        }
+
+        final response = await employeeService.updateEmployee(employeeId!, formData);
+
+        setState(() => _isLoading = false);
+
+        if (response != null) {
+          _showSnackBar("✅ Employee Updated Successfully");
+          Navigator.pop(context, true);
+        } else {
+          _showSnackBar("❌ Failed to update employee", isError: true);
+        }
       }
     } catch (e) {
       setState(() => _isLoading = false);
@@ -827,6 +1110,7 @@ class _EditEmployeeFormState extends State<EditEmployeeForm> {
     middleName.dispose();
     lastName.dispose();
     email.dispose();
+    password.dispose();
     mobileNumber.dispose();
     dob.dispose();
     doj.dispose();

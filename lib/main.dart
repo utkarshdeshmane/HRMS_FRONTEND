@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'repository/screens/sidebar/hrms_sidebar.dart';
 import 'repository/screens/dashboard/dashboard.dart';
+import 'repository/screens/auth/splash_screen.dart';
 import 'config/app_theme.dart';
 
 void main() {
@@ -16,7 +17,7 @@ class MyApp extends StatelessWidget {
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.light, // Change to ThemeMode.system for auto dark mode
-      home: HomeLayout(),
+      home: const SplashScreen(), // Start with splash screen for authentication check
     );
   }
 }

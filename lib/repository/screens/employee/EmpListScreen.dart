@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/employee_api_service.dart';
 import 'package:blinkit/repository/screens/employee/create_employee_form.dart';
+import 'package:blinkit/repository/screens/employee/edit_employee_form.dart';
 
 class EmployeeListScreen extends StatefulWidget {
   const EmployeeListScreen({Key? key}) : super(key: key);
@@ -755,9 +756,26 @@ class _EmployeeListScreenState extends State<EmployeeListScreen> {
     );
   }
 
-  void _editEmployee(dynamic employee) {
+  void _editEmployee(dynamic employee) async {
     if (employee == null) return;
-    _showSnackBar('Navigate to Edit Employee Form: ${_getFullName(employee)}', Colors.blue);
+    
+    try {
+      final result = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => EditEmployeeForm(employee: employee),
+        ),
+      );
+      
+      // If employee was updated, refresh the list
+      if (result == true) {
+        _showSnackBar('Employee updated successfully', Colors.green);
+        _loadEmployees(); // Refresh the employee list
+      }
+    } catch (e) {
+      print('Error navigating to edit form: $e');
+      _showSnackBar('Error opening edit form', Colors.red);
+    }
   }
 
   void _deleteEmployee(dynamic employee) {

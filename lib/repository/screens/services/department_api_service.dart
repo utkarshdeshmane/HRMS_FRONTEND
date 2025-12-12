@@ -5,7 +5,8 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 
 class DepartmentApiService {
-  static const String baseUrl = "https://distillatory-neoma-unmoldy.ngrok-free.dev/api";
+  static const String baseUrl = "http://127.0.0.1:8000/api";
+  // static const String baseUrl = "https://distillatory-neoma-unmoldy.ngrok-free.dev/api";
   
   // JWT Token
   static const String token =

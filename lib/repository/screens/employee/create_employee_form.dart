@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -8,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../services/employee_api_service.dart';
 import '../services/organization_api_service.dart';
 import '../services/department_api_service.dart';
+import '../utils/platform_file.dart';
 
 class CreateEmployeeForm extends StatefulWidget {
   @override
@@ -27,6 +27,7 @@ class _CreateEmployeeFormState extends State<CreateEmployeeForm> {
   final middleName = TextEditingController();
   final lastName = TextEditingController();
   final email = TextEditingController();
+  final password = TextEditingController();
   final mobileNumber = TextEditingController();
   final dob = TextEditingController();
   final doj = TextEditingController();
@@ -62,14 +63,14 @@ class _CreateEmployeeFormState extends State<CreateEmployeeForm> {
   List<dynamic> reportingManagers = [];
 
   // Document Files
-  File? adharCard;
-  File? panCard;
-  File? bankBook;
-  File? xStandardMarksheet;
-  File? xiiStandardMarksheet;
-  File? degree;
-  File? experienceLetter;
-  File? photo;
+  CustomPlatformFile? adharCard;
+  CustomPlatformFile? panCard;
+  CustomPlatformFile? bankBook;
+  CustomPlatformFile? xStandardMarksheet;
+  CustomPlatformFile? xiiStandardMarksheet;
+  CustomPlatformFile? degree;
+  CustomPlatformFile? experienceLetter;
+  CustomPlatformFile? photo;
 
   @override
   void initState() {
@@ -105,10 +106,10 @@ class _CreateEmployeeFormState extends State<CreateEmployeeForm> {
       print('📦 FORM: Managers received: ${mgrs.length}');
       
       setState(() {
-        organizations = orgs is List ? orgs : [];
-        departments = depts is List ? depts : [];
-        shifts = shfts is List ? shfts : [];
-        reportingManagers = mgrs is List ? mgrs : [];
+        organizations = orgs;
+        departments = depts;
+        shifts = shfts;
+        reportingManagers = mgrs;
         _isLoading = false;
         _dropdownsLoaded = true;
       });
@@ -168,48 +169,71 @@ class _CreateEmployeeFormState extends State<CreateEmployeeForm> {
   }
 
   // Pick document files (PDF, DOC, images, etc.)
-  Future<File?> pickDocument() async {
+  Future<CustomPlatformFile?> pickDocument() async {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'],
-        withData: kIsWeb, // For web, load file data
+        withData: true, // Always load file data for cross-platform compatibility
+        allowMultiple: false,
       );
       
-      if (result != null) {
-        if (kIsWeb) {
-          // For web, create a File from bytes
-          if (result.files.single.bytes != null) {
-            // Note: On web, File path won't work, but we have bytes
-            _showSnackBar("Document selected: ${result.files.single.name}");
-            // We'll need to handle web files differently in the API
-            return File(result.files.single.name); // Placeholder
-          }
-        } else {
-          // For mobile/desktop
-          if (result.files.single.path != null) {
-            return File(result.files.single.path!);
-          }
+      if (result != null && result.files.isNotEmpty) {
+        final pickedFile = CustomPlatformFile.fromPickerFile(result.files.first);
+        if (pickedFile != null) {
+          _showSnackBar("Document selected: ${pickedFile.name}");
+          return pickedFile;
         }
       }
       return null;
     } catch (e) {
+      print("❌ Error picking document: $e");
       _showSnackBar("Error picking document: $e", isError: true);
       return null;
     }
   }
 
   // Pick photo/image
-  Future<File?> pickPhoto() async {
+  Future<CustomPlatformFile?> pickPhoto() async {
     try {
-      final picker = ImagePicker();
-      final picked = await picker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 70,
-      );
-      if (picked == null) return null;
-      return File(picked.path);
+      if (kIsWeb) {
+        // For web, use FilePicker for images too
+        final result = await FilePicker.platform.pickFiles(
+          type: FileType.image,
+          withData: true,
+          allowMultiple: false,
+        );
+        
+        if (result != null && result.files.isNotEmpty) {
+          final pickedFile = CustomPlatformFile.fromPickerFile(result.files.first);
+          if (pickedFile != null) {
+            _showSnackBar("Photo selected: ${pickedFile.name}");
+            return pickedFile;
+          }
+        }
+        return null;
+      } else {
+        // For mobile/desktop, use ImagePicker
+        final picker = ImagePicker();
+        final picked = await picker.pickImage(
+          source: ImageSource.gallery,
+          imageQuality: 70,
+        );
+        if (picked != null) {
+          final bytes = await picked.readAsBytes();
+          final platformFile = CustomPlatformFile(
+            name: picked.name,
+            path: picked.path,
+            bytes: bytes,
+            isWeb: false,
+          );
+          _showSnackBar("Photo selected: ${platformFile.name}");
+          return platformFile;
+        }
+        return null;
+      }
     } catch (e) {
+      print("❌ Error picking photo: $e");
       _showSnackBar("Error picking photo: $e", isError: true);
       return null;
     }
@@ -369,6 +393,15 @@ class _CreateEmployeeFormState extends State<CreateEmployeeForm> {
                           keyboardType: TextInputType.emailAddress,
                           validator: (v) =>
                               v!.trim().isEmpty || !v.contains("@") ? "Invalid email" : null,
+                        ),
+                        SizedBox(height: 16),
+                        _buildTextField(
+                          password,
+                          "Password *",
+                          Icons.lock_outlined,
+                          obscureText: true,
+                          validator: (v) =>
+                              v!.trim().isEmpty || v.length < 6 ? "Password must be at least 6 characters" : null,
                         ),
                         SizedBox(height: 16),
                         _buildTextField(
@@ -815,12 +848,14 @@ class _CreateEmployeeFormState extends State<CreateEmployeeForm> {
     TextInputType? keyboardType,
     String? Function(String?)? validator,
     bool enabled = true,
+    bool obscureText = false,
   }) {
     return TextFormField(
       controller: controller,
       keyboardType: keyboardType,
       validator: validator,
       enabled: enabled,
+      obscureText: obscureText,
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon, color: enabled ? Color(0xFF6366F1) : Colors.grey, size: 20),
@@ -977,7 +1012,7 @@ class _CreateEmployeeFormState extends State<CreateEmployeeForm> {
     );
   }
 
-  Widget _buildFilePicker(String label, File? file, String fileType) {
+  Widget _buildFilePicker(String label, CustomPlatformFile? file, String fileType) {
     return Padding(
       padding: EdgeInsets.only(bottom: 16),
       child: Row(
@@ -1028,7 +1063,7 @@ class _CreateEmployeeFormState extends State<CreateEmployeeForm> {
                   ),
                   onPressed: () async {
                     // Use different picker for photo vs documents
-                    File? pickedFile;
+                    CustomPlatformFile? pickedFile;
                     if (fileType == "photo") {
                       pickedFile = await pickPhoto();
                     } else {
@@ -1088,18 +1123,19 @@ class _CreateEmployeeFormState extends State<CreateEmployeeForm> {
         "country": pCountry.text.trim(),
       };
 
-      // Prepare form data
+      // Prepare form data with flattened addresses (Django backend expects this format)
       Map<String, dynamic> formData = {
         // Personal Info
         "firstName": firstName.text.trim(),
         "lastName": lastName.text.trim(),
         "email": email.text.trim(),
+        "password": password.text.trim(),
         "mobileNumber": mobileNumber.text.trim(),
         "gender": selectedGender,
         "dob": dob.text.trim(),
         "doj": doj.text.trim(),
         "status": selectedStatus,
-        "role": selectedRole, // Keep original case (lowercase)
+        "role": selectedRole,
         "designationId": designationId.text.trim(),
         
         // Organization references
@@ -1107,9 +1143,19 @@ class _CreateEmployeeFormState extends State<CreateEmployeeForm> {
         "departmentId": selectedDept,
         "shiftId": selectedShift,
         
-        // Addresses - send as nested objects (not JSON strings)
-        "currentAddress": currentAddress,
-        "permanentAddress": permanentAddress,
+        // Flattened current address (Django backend restructures these)
+        "currentAddress.street": currentAddress["street"],
+        "currentAddress.city": currentAddress["city"],
+        "currentAddress.state": currentAddress["state"],
+        "currentAddress.zip": currentAddress["zip"],
+        "currentAddress.country": currentAddress["country"],
+        
+        // Flattened permanent address
+        "permanentAddress.street": permanentAddress["street"],
+        "permanentAddress.city": permanentAddress["city"],
+        "permanentAddress.state": permanentAddress["state"],
+        "permanentAddress.zip": permanentAddress["zip"],
+        "permanentAddress.country": permanentAddress["country"],
       };
 
       // Add optional fields
@@ -1121,7 +1167,7 @@ class _CreateEmployeeFormState extends State<CreateEmployeeForm> {
       }
 
       // Prepare documents
-      Map<String, File?> docs = {};
+      Map<String, CustomPlatformFile?> docs = {};
       if (adharCard != null) docs["adharCard"] = adharCard;
       if (panCard != null) docs["panCard"] = panCard;
       if (bankBook != null) docs["bankBook"] = bankBook;
@@ -1160,6 +1206,7 @@ class _CreateEmployeeFormState extends State<CreateEmployeeForm> {
     middleName.dispose();
     lastName.dispose();
     email.dispose();
+    password.dispose();
     mobileNumber.dispose();
     dob.dispose();
     doj.dispose();

@@ -1,25 +1,37 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../utils/platform_file.dart';
 
 class ApiService {
-  static const String baseUrl = "https://distillatory-neoma-unmoldy.ngrok-free.dev/";
+    
+  // static const String baseUrl = "https://distillatory-neoma-unmoldy.ngrok-free.dev/";
+  static const String baseUrl = "http://127.0.0.1:8000/";
   
-  // TODO: UPDATE THIS TOKEN - Get fresh token from your backend login API
-  // Current token is expired (exp: 1765437026 = Feb 2025)
-  // To get new token: Login to your backend and copy the JWT token
-  static const String token =
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbXBJZCI6IjY5Mjk0ZGYxYWI5ZmI3YWE0MmJjZWY4ZiIsInJvbGUiOiJhZG1pbiIsImV4cCI6MTc2NTQzNzAyNiwiaWF0IjoxNzY0ODMyMjI2fQ.70DG833hoc8bKfRJpSd-eMQbt7C0C5tJVDS7kjGsEI0";
-
-  static Map<String, String> getHeaders() {
-    return {
+  // Get headers with authentication token if available
+  static Future<Map<String, String>> getHeaders() async {
+    final headers = {
       "Content-Type": "application/json",
-      // "Authorization": "Bearer $token",
       "Accept": "application/json",
       "ngrok-skip-browser-warning": "true",
     };
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token');
+      if (token != null) {
+        headers["Authorization"] = "Bearer $token";
+      }
+    } catch (e) {
+      print("Error getting auth token: $e");
+    }
+
+    return headers;
   }
 
   // Helper to get employee ID
@@ -27,207 +39,19 @@ class ApiService {
     return employee['id']?.toString() ?? employee['_id']?.toString();
   }
 
-  // ========== Get ALL dropdown data from employee/fetch endpoint ==========
-  Future<Map<String, dynamic>> getDropdowns() async {
-    print("📡 FETCHING ALL DROPDOWN DATA FROM EMPLOYEE API");
-    
-    Map<String, dynamic> dropdownData = {
-      "organizations": [],
-      "departments": [],
-      "shifts": [],
-      "reportingManagers": []
-    };
-    
-    try {
-      final url = Uri.parse("${baseUrl}api/employee/fetch/");
-      print("   URL: $url");
-      print("   Headers: ${getHeaders()}");
-      
-      final response = await http.get(url, headers: getHeaders());
-      
-      print("   Status: ${response.statusCode}");
-      print("   Response length: ${response.body.length}");
-      
-      if (response.statusCode == 200) {
-        try {
-          final decoded = json.decode(response.body);
-          print("   Decoded type: ${decoded.runtimeType}");
-          print("   Available keys: ${decoded.keys.toList()}");
-          
-          // Extract organizations
-          if (decoded.containsKey("organizations")) {
-            dropdownData["organizations"] = decoded["organizations"] ?? [];
-          }
-          
-          // Extract departments
-          if (decoded.containsKey("departments")) {
-            dropdownData["departments"] = decoded["departments"] ?? [];
-          }
-          
-          // Extract shifts
-          if (decoded.containsKey("shifts")) {
-            dropdownData["shifts"] = decoded["shifts"] ?? [];
-          }
-          
-          // Extract reporting managers
-          if (decoded.containsKey("reportingManagers")) {
-            dropdownData["reportingManagers"] = decoded["reportingManagers"] ?? [];
-          }
-          
-          print("\n✅ SUCCESSFULLY EXTRACTED DROPDOWN DATA:");
-          print("   Organizations: ${dropdownData["organizations"].length}");
-          if (dropdownData["organizations"].isNotEmpty) {
-            print("   Sample: ${dropdownData["organizations"].take(2).map((o) => "${o["orgName"]} (id: ${o["id"]})").toList()}");
-          }
-          
-          print("   Departments: ${dropdownData["departments"].length}");
-          if (dropdownData["departments"].isNotEmpty) {
-            print("   Sample: ${dropdownData["departments"].take(2).map((d) => "${d["deptName"]} (id: ${d["id"]})").toList()}");
-          }
-          
-          print("   Shifts: ${dropdownData["shifts"].length}");
-          if (dropdownData["shifts"].isNotEmpty) {
-            print("   Sample: ${dropdownData["shifts"].take(2).map((s) => "${s["shiftType"]} (id: ${s["id"]})").toList()}");
-          }
-          
-          print("   Reporting Managers: ${dropdownData["reportingManagers"].length}");
-          if (dropdownData["reportingManagers"].isNotEmpty) {
-            print("   Sample: ${dropdownData["reportingManagers"].take(2).map((m) => "${m["firstName"]} (id: ${m["id"]})").toList()}");
-          }
-          
-          // If any dropdown is empty, check if data might be in different format
-          if (dropdownData["organizations"].isEmpty || 
-              dropdownData["departments"].isEmpty ||
-              dropdownData["shifts"].isEmpty) {
-            
-            print("\n⚠️ WARNING: Some dropdowns are empty. Checking alternative structures...");
-            
-            // Try to find data in different keys
-            final keys = decoded.keys.toList();
-            print("   All available keys in response: $keys");
-            
-            // Check if there's a nested structure
-            for (var key in keys) {
-              print("   Checking key '$key': ${decoded[key].runtimeType}");
-            }
-          }
-          
-        } catch (e) {
-          print("   ❌ JSON decode error: $e");
-          print("   Raw response (first 500 chars): ${response.body.length > 500 ? '${response.body.substring(0, 500)}...' : response.body}");
-        }
-      } else {
-        print("❌ API call failed: ${response.statusCode}");
-        print("   Error body: ${response.body}");
-        
-        // Try alternative endpoints if main endpoint fails
-        print("\n🔄 Trying alternative endpoints...");
-        return await _getDropdownsFromSeparateEndpoints();
-      }
-      
-      return dropdownData;
-      
-    } catch (e, stackTrace) {
-      print("\n❌ EXCEPTION in getDropdowns: $e");
-      print("📍 STACK TRACE: $stackTrace");
-      
-      // Fallback to separate endpoints
-      return await _getDropdownsFromSeparateEndpoints();
-    }
-  }
-
-  // Fallback method to get data from separate endpoints
-  Future<Map<String, dynamic>> _getDropdownsFromSeparateEndpoints() async {
-    print("\n🔄 FALLBACK: Fetching from separate endpoints...");
-    
-    Map<String, dynamic> dropdownData = {
-      "organizations": [],
-      "departments": [],
-      "shifts": [],
-      "reportingManagers": []
-    };
-    
-    try {
-      // Fetch Organizations separately
-      final orgUrl = Uri.parse("${baseUrl}api/organization/fetch/");
-      final orgResponse = await http.get(orgUrl, headers: getHeaders());
-      
-      if (orgResponse.statusCode == 200) {
-        final orgDecoded = json.decode(orgResponse.body);
-        if (orgDecoded is List) {
-          dropdownData["organizations"] = orgDecoded;
-        } else if (orgDecoded is Map && orgDecoded.containsKey("data")) {
-          dropdownData["organizations"] = orgDecoded["data"] ?? [];
-        }
-      }
-      
-      // Fetch Departments separately
-      final deptUrl = Uri.parse("${baseUrl}api/department/fetch/");
-      final deptResponse = await http.get(deptUrl, headers: getHeaders());
-      
-      if (deptResponse.statusCode == 200) {
-        final deptDecoded = json.decode(deptResponse.body);
-        if (deptDecoded is List) {
-          dropdownData["departments"] = deptDecoded;
-        } else if (deptDecoded is Map && deptDecoded.containsKey("data")) {
-          dropdownData["departments"] = deptDecoded["data"] ?? [];
-        }
-      }
-      
-      // Try to get shifts from employee data
-      final empUrl = Uri.parse("${baseUrl}api/employee/fetch/");
-      final empResponse = await http.get(empUrl, headers: getHeaders());
-      
-      if (empResponse.statusCode == 200) {
-        final empDecoded = json.decode(empResponse.body);
-        
-        // Extract employees for reporting managers
-        List<dynamic> employees = [];
-        if (empDecoded is Map) {
-          employees = empDecoded["results"] ?? empDecoded["data"] ?? [];
-        } else if (empDecoded is List) {
-          employees = empDecoded;
-        }
-        
-        // Create reporting managers from employees
-        List<Map<String, dynamic>> managers = [];
-        for (var emp in employees) {
-          if (emp is Map) {
-            String? firstName = emp["firstName"]?.toString() ?? emp["first_name"]?.toString();
-            String? id = emp["id"]?.toString() ?? emp["_id"]?.toString();
-            
-            if (id != null && firstName != null) {
-              managers.add({
-                "id": id,
-                "firstName": firstName,
-              });
-            }
-          }
-        }
-        dropdownData["reportingManagers"] = managers;
-      }
-      
-      print("✅ Fallback data loaded:");
-      print("   Organizations: ${dropdownData["organizations"].length}");
-      print("   Departments: ${dropdownData["departments"].length}");
-      print("   Reporting Managers: ${dropdownData["reportingManagers"].length}");
-      
-    } catch (e) {
-      print("❌ Fallback also failed: $e");
-    }
-    
-    return dropdownData;
-  }
-
-  // ========== Get employees only ==========
+  // ========== Fetch Employees with Dropdowns ==========
   Future<List<dynamic>> getEmployees() async {
     try {
       final url = Uri.parse("${baseUrl}api/employee/fetch/");
-      final response = await http.get(url, headers: getHeaders());
+      final headers = await getHeaders();
+      final response = await http.get(url, headers: headers);
+
+      print("📡 Employee Response Status: ${response.statusCode}");
 
       if (response.statusCode == 200) {
         final decoded = json.decode(response.body);
         
+        // Handle different response formats
         if (decoded is List) {
           return decoded;
         } else if (decoded is Map) {
@@ -241,111 +65,22 @@ class ApiService {
     }
   }
 
-  // ========== Static method for backward compatibility ==========
-  static Future<Map<String, dynamic>> getEmployeeWithDropdowns() async {
-    try {
-      final url = Uri.parse("${baseUrl}api/employee/fetch/");
-      final response = await http.get(url, headers: getHeaders());
-
-      if (response.statusCode == 200) {
-        final decoded = json.decode(response.body);
-        
-        // Ensure the response has the expected structure
-        Map<String, dynamic> result = {
-          "results": [],
-          "organizations": [],
-          "departments": [],
-          "shifts": [],
-          "reportingManagers": []
-        };
-        
-        if (decoded is Map) {
-          result["results"] = decoded["results"] ?? decoded["data"] ?? [];
-          result["organizations"] = decoded["organizations"] ?? [];
-          result["departments"] = decoded["departments"] ?? [];
-          result["shifts"] = decoded["shifts"] ?? [];
-          result["reportingManagers"] = decoded["reportingManagers"] ?? [];
-        }
-        
-        return result;
-      } else {
-        return {
-          "results": [],
-          "organizations": [],
-          "departments": [],
-          "shifts": [],
-          "reportingManagers": []
-        };
-      }
-    } catch (e) {
-      print("❌ EXCEPTION in getEmployeeWithDropdowns: $e");
-      return {
-        "results": [],
-        "organizations": [],
-        "departments": [],
-        "shifts": [],
-        "reportingManagers": []
-      };
-    }
-  }
-
   // ========== Fetch Shifts from Employee API ==========
   Future<List<dynamic>> getShifts() async {
     try {
       print("📡 Fetching shifts from employee API...");
       final url = Uri.parse("${baseUrl}api/employee/fetch/");
-      final response = await http.get(url, headers: getHeaders());
+      final headers = await getHeaders();
+      final response = await http.get(url, headers: headers);
 
       print("   Status: ${response.statusCode}");
 
       if (response.statusCode == 200) {
         final decoded = json.decode(response.body);
         
-        if (decoded is Map) {
-          // Check for shifts in the response
-          if (decoded.containsKey("shifts")) {
-            print("✅ Found shifts in response");
-            return decoded["shifts"] is List ? decoded["shifts"] : [];
-          }
-          
-          // If employees have shift data, extract unique shifts
-          final employees = decoded["data"] ?? decoded["results"] ?? [];
-          if (employees is List && employees.isNotEmpty) {
-            Set<String> seenIds = {};
-            List<Map<String, dynamic>> uniqueShifts = [];
-            
-            for (var emp in employees) {
-              if (emp is Map) {
-                // Check for shift data in employee
-                if (emp.containsKey("shiftId") && emp.containsKey("shiftType")) {
-                  String shiftId = emp["shiftId"].toString();
-                  if (!seenIds.contains(shiftId)) {
-                    seenIds.add(shiftId);
-                    uniqueShifts.add({
-                      "id": shiftId,
-                      "shiftType": emp["shiftType"],
-                    });
-                  }
-                } else if (emp.containsKey("shift")) {
-                  // If shift is an object
-                  var shift = emp["shift"];
-                  if (shift is Map && shift.containsKey("id")) {
-                    String shiftId = shift["id"].toString();
-                    if (!seenIds.contains(shiftId)) {
-                      seenIds.add(shiftId);
-                      uniqueShifts.add({
-                        "id": shiftId,
-                        "shiftType": shift["shiftType"] ?? shift["type"] ?? "Unknown",
-                      });
-                    }
-                  }
-                }
-              }
-            }
-            
-            print("✅ Extracted ${uniqueShifts.length} unique shifts from employees");
-            return uniqueShifts;
-          }
+        if (decoded is Map && decoded.containsKey("shifts")) {
+          print("✅ Found shifts in response");
+          return decoded["shifts"] is List ? decoded["shifts"] : [];
         }
       }
       
@@ -362,41 +97,16 @@ class ApiService {
     try {
       print("📡 Fetching reporting managers...");
       final url = Uri.parse("${baseUrl}api/employee/fetch/");
-      final response = await http.get(url, headers: getHeaders());
+      final headers = await getHeaders();
+      final response = await http.get(url, headers: headers);
 
       if (response.statusCode == 200) {
         final decoded = json.decode(response.body);
-        final employees = decoded["data"] ?? decoded["results"] ?? [];
         
-        List<Map<String, dynamic>> managers = [];
-        
-        if (employees is List) {
-          for (var emp in employees) {
-            if (emp is Map) {
-              String? role = emp["role"]?.toString();
-              String? firstName = emp["firstName"]?.toString() ?? emp["first_name"]?.toString();
-              String? lastName = emp["lastName"]?.toString() ?? emp["last_name"]?.toString();
-              String? id = emp["id"]?.toString() ?? emp["_id"]?.toString();
-              
-              if (id != null && firstName != null) {
-                // Include managers, admins, and HR as potential reporting managers
-                bool isManager = role == "manager" || role == "admin" || role == "hr";
-                if (isManager) {
-                  String fullName = "$firstName ${lastName ?? ''}".trim();
-                  
-                  managers.add({
-                    "id": id,
-                    "firstName": fullName,
-                    "role": role ?? "employee"
-                  });
-                }
-              }
-            }
-          }
+        if (decoded is Map && decoded.containsKey("reportingManagers")) {
+          print("✅ Found reporting managers in response");
+          return decoded["reportingManagers"] is List ? decoded["reportingManagers"] : [];
         }
-        
-        print("✅ Found ${managers.length} reporting managers");
-        return managers;
       }
       
       print("⚠️ No managers found");
@@ -409,45 +119,102 @@ class ApiService {
 
   // ========== Create Employee ==========
   Future<http.Response> createEmployee(
-    Map<String, dynamic> formData, Map<String, File?> docs) async {
+    Map<String, dynamic> formData, Map<String, CustomPlatformFile?> docs) async {
     print("=" * 80);
     print("🔵 CREATE EMPLOYEE API CALL STARTED");
     print("=" * 80);
     
     try {
-      final url = Uri.parse("${baseUrl}api/employee/create/");
+      var request = http.MultipartRequest(
+          "POST", Uri.parse("${baseUrl}api/employee/create/"));
+
+      // Add authentication headers
+      final headers = await getHeaders();
+      request.headers.addAll(headers);
+      request.headers.remove("Content-Type"); // MultipartRequest sets this automatically
+
+      print("📝 Adding form fields...");
       
-      print("Preparing employee data...");
-      print("Form data keys: ${formData.keys.toList()}");
-      
-      // Use multipart form data (backend expects this format)
-      var request = http.MultipartRequest("POST", url);
-      request.headers["Accept"] = "application/json";
-      request.headers["ngrok-skip-browser-warning"] = "true";
-      
+      // Add all form fields
       formData.forEach((key, value) {
         if (value != null) {
-          if (value is Map) {
-            request.fields[key] = json.encode(value);
-          } else {
-            request.fields[key] = value.toString();
-          }
+          request.fields[key] = value.toString();
         }
       });
       
-      var streamedResponse = await request.send();
-      final response = await http.Response.fromStream(streamedResponse);
+      print("✅ Added ${request.fields.length} form fields");
       
-      print("📡 Request sent to: $url");
+      // Add document files
+      print("📎 Processing ${docs.length} document fields...");
+      int filesAdded = 0;
+      
+      for (var entry in docs.entries) {
+        if (entry.value != null) {
+          try {
+            CustomPlatformFile platformFile = entry.value!;
+            
+            // Get file bytes using the platform file method
+            Uint8List? bytes = await platformFile.getBytes();
+            
+            if (bytes == null) {
+              print("⚠️ Skipping ${entry.key}: Could not read file bytes");
+              continue;
+            }
+            
+            String filename = platformFile.name;
+            if (filename.isEmpty) {
+              filename = "${entry.key}_document";
+            }
+            
+            // Detect MIME type
+            String? mimeType = lookupMimeType(filename);
+            MediaType? mediaType;
+            
+            if (mimeType != null) {
+              var parts = mimeType.split('/');
+              mediaType = MediaType(parts[0], parts[1]);
+            } else {
+              // Default MIME types based on file type
+              if (entry.key == "photo") {
+                mediaType = MediaType('image', 'jpeg');
+              } else {
+                mediaType = MediaType('application', 'pdf');
+              }
+            }
+            
+            // Add file to request with nested field name for Django backend
+            request.files.add(
+              http.MultipartFile.fromBytes(
+                "documents.${entry.key}", // Django expects documents.adharCard format
+                bytes,
+                filename: filename,
+                contentType: mediaType,
+              ),
+            );
+            
+            filesAdded++;
+            print("✅ File ${filesAdded}: documents.${entry.key} -> $filename (${bytes.length} bytes)");
+          } catch (e) {
+            print("⚠️ Error adding file ${entry.key}: $e");
+          }
+        }
+      }
+      
+      print("📎 Total files added: $filesAdded");
+      print("📡 Sending request to: ${baseUrl}api/employee/create/");
+      
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
 
-      print("\n📥 RESPONSE RECEIVED");
+      print("📥 RESPONSE RECEIVED");
       print("📊 Status Code: ${response.statusCode}");
       print("📄 Response Body: ${response.body}");
       print("=" * 80);
 
       return response;
     } catch (e, stackTrace) {
-      print("\n❌ CREATE EMPLOYEE EXCEPTION: $e");
+      print("❌ CREATE EMPLOYEE EXCEPTION: $e");
+      print("📍 STACK TRACE: $stackTrace");
       return http.Response(
         json.encode({"error": e.toString()}), 
         500
@@ -455,44 +222,179 @@ class ApiService {
     }
   }
 
-  // Delete Employee
-  Future<bool> deleteEmployee(String employeeId) async {
-    try {
-      final url = Uri.parse("${baseUrl}api/employee/delete/$employeeId/");
-      final response = await http.delete(url, headers: getHeaders());
-
-      return response.statusCode == 200 || response.statusCode == 204;
-    } catch (e) {
-      print("❌ DELETE EXCEPTION: $e");
-      return false;
-    }
-  }
-
-  // Update Employee
+  // ========== Update Employee ==========
   Future<Map<String, dynamic>?> updateEmployee(
       String employeeId, Map<String, dynamic> employeeData) async {
     try {
       final url = Uri.parse("${baseUrl}api/employee/update/$employeeId/");
+      print("✏️ Updating employee: $employeeId");
+
+      final headers = await getHeaders();
       final response = await http.put(
         url,
-        headers: getHeaders(),
+        headers: headers,
         body: json.encode(employeeData),
       );
 
+      print("📊 Update Status Code: ${response.statusCode}");
+      print("📄 Update Response: ${response.body}");
+
       if (response.statusCode == 200) {
+        print("✅ Employee updated successfully");
         return json.decode(response.body);
+      } else {
+        print("❌ Update failed: ${response.statusCode}");
+        return null;
       }
-      return null;
-    } catch (e) {
+    } catch (e, stackTrace) {
       print("❌ UPDATE EXCEPTION: $e");
+      print("📍 STACK TRACE: $stackTrace");
       return null;
     }
   }
 
+  // ========== Update Employee with Files ==========
+  Future<http.Response> updateEmployeeWithFiles(
+    String employeeId, 
+    Map<String, dynamic> formData, 
+    Map<String, CustomPlatformFile?> docs
+  ) async {
+    print("=" * 80);
+    print("🔵 UPDATE EMPLOYEE WITH FILES API CALL STARTED");
+    print("=" * 80);
+    
+    try {
+      var request = http.MultipartRequest(
+          "PUT", Uri.parse("${baseUrl}api/employee/update/$employeeId/"));
+
+      // Add authentication headers
+      final headers = await getHeaders();
+      request.headers.addAll(headers);
+      request.headers.remove("Content-Type"); // MultipartRequest sets this automatically
+
+      print("📝 Adding form fields...");
+      
+      // Add all form fields
+      formData.forEach((key, value) {
+        if (value != null) {
+          request.fields[key] = value.toString();
+        }
+      });
+      
+      print("✅ Added ${request.fields.length} form fields");
+      
+      // Add document files
+      print("📎 Processing ${docs.length} document fields...");
+      int filesAdded = 0;
+       
+      for (var entry in docs.entries) {
+        if (entry.value != null) {
+          try {
+            CustomPlatformFile platformFile = entry.value!;
+            
+            // Get file bytes using the platform file method
+            Uint8List? bytes = await platformFile.getBytes();
+            
+            if (bytes == null) {
+              print("⚠️ Skipping ${entry.key}: Could not read file bytes");
+              continue;
+            }
+            
+            String filename = platformFile.name;
+            if (filename.isEmpty) {
+              filename = "${entry.key}_document";
+            }
+            
+            // Detect MIME type
+            String? mimeType = lookupMimeType(filename);
+            MediaType? mediaType;
+            
+            if (mimeType != null) {
+              var parts = mimeType.split('/');
+              mediaType = MediaType(parts[0], parts[1]);
+            } else {
+              // Default MIME types based on file type
+              if (entry.key == "photo") {
+                mediaType = MediaType('image', 'jpeg');
+              } else {
+                mediaType = MediaType('application', 'pdf');
+              }
+            }
+            
+            // Add file to request with nested field name for Django backend
+            request.files.add(
+              http.MultipartFile.fromBytes(
+                "documents.${entry.key}", // Django expects documents.adharCard format
+                bytes,
+                filename: filename,
+                contentType: mediaType,
+              ),
+            );
+            
+            filesAdded++;
+            print("✅ File ${filesAdded}: documents.${entry.key} -> $filename (${bytes.length} bytes)");
+          } catch (e) {
+            print("⚠️ Error adding file ${entry.key}: $e");
+          }
+        }
+      }
+      
+      print("📎 Total files added: $filesAdded");
+      print("📡 Sending request to: ${baseUrl}api/employee/update/$employeeId/");
+      
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
+
+      print("📥 RESPONSE RECEIVED");
+      print("📊 Status Code: ${response.statusCode}");
+      print("📄 Response Body: ${response.body}");
+      print("=" * 80);
+
+      return response;
+    } catch (e, stackTrace) {
+      print("❌ UPDATE EMPLOYEE WITH FILES EXCEPTION: $e");
+      print("📍 STACK TRACE: $stackTrace");
+      return http.Response(
+        json.encode({"error": e.toString()}), 
+        500
+      );
+    }
+  }
+
+  // ========== Delete Employee ==========
+  Future<bool> deleteEmployee(String employeeId) async {
+    try {
+      final url = Uri.parse("${baseUrl}api/employee/delete/$employeeId/");
+      print("🗑️ Deleting employee: $employeeId");
+
+      final headers = await getHeaders();
+      final response = await http.delete(url, headers: headers);
+
+      print("📊 Delete Status Code: ${response.statusCode}");
+      print("📄 Delete Response: ${response.body}");
+
+      if (response.statusCode == 200 || response.statusCode == 204) {
+        print("✅ Employee deleted successfully");
+        return true;
+      } else {
+        print("❌ Delete failed: ${response.statusCode}");
+        return false;
+      }
+    } catch (e, stackTrace) {
+      print("❌ DELETE EXCEPTION: $e");
+      print("📍 STACK TRACE: $stackTrace");
+      return false;
+    }
+  }
+
+  // ========== Get Employee Profile ==========
   Future<Map<String, dynamic>?> getLoggedEmployee() async {
     try {
       final url = Uri.parse("${baseUrl}api/employee/profile/");
-      final response = await http.get(url, headers: getHeaders());
+      final headers = await getHeaders();
+      final response = await http.get(url, headers: headers);
+
+      print("Profile Response: ${response.body}");
 
       if (response.statusCode == 200) {
         return json.decode(response.body);
@@ -504,11 +406,15 @@ class ApiService {
     }
   }
 
-  // Check-In API
+  // ========== Check-In ==========
   Future<bool> checkIn() async {
     try {
       final url = Uri.parse("${baseUrl}api/employee/checkin/");
-      final response = await http.post(url, headers: getHeaders());
+      final headers = await getHeaders();
+      final response = await http.post(url, headers: headers);
+
+      print("CheckIn Response: ${response.body}");
+
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) {
       print("CheckIn Error: $e");
@@ -516,15 +422,252 @@ class ApiService {
     }
   }
 
-  // Check-Out API
+  // ========== Check-Out ==========
   Future<bool> checkOut() async {
     try {
       final url = Uri.parse("${baseUrl}api/employee/checkout/");
-      final response = await http.post(url, headers: getHeaders());
+      final headers = await getHeaders();
+      final response = await http.post(url, headers: headers);
+
+      print("CheckOut Response: ${response.body}");
+
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) {
       print("CheckOut Error: $e");
       return false;
+    }
+  }
+
+  // ========== Employee Login ==========
+  Future<Map<String, dynamic>?> loginEmployee(String email, String password) async {
+    try {
+      final url = Uri.parse("${baseUrl}api/employee/login/");
+      final headers = await getHeaders();
+      final response = await http.post(
+        url,
+        headers: headers,
+        body: json.encode({
+          "email": email,
+          "password": password,
+        }),
+      );
+
+      print("Login Response: ${response.body}");
+
+      if (response.statusCode == 200) {
+        return json.decode(response.body);
+      }
+      return null;
+    } catch (e) {
+      print("Login Error: $e");
+      return null;
+    }
+  }
+
+  // ========== Change Password ==========
+  Future<bool> changePassword(String oldPassword, String newPassword) async {
+    try {
+      final url = Uri.parse("${baseUrl}api/employee/change-password/");
+      final headers = await getHeaders();
+      final response = await http.post(
+        url,
+        headers: headers,
+        body: json.encode({
+          "old_password": oldPassword,
+          "new_password": newPassword,
+        }),
+      );
+
+      print("Change Password Response: ${response.body}");
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print("Change Password Error: $e");
+      return false;
+    }
+  }
+
+  // ========== Send Credentials ==========
+  Future<bool> sendCredentials(String employeeId) async {
+    try {
+      final url = Uri.parse("${baseUrl}api/employee/send-credentials/$employeeId/");
+      final headers = await getHeaders();
+      final response = await http.get(url, headers: headers);
+
+      print("Send Credentials Response: ${response.body}");
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print("Send Credentials Error: $e");
+      return false;
+    }
+  }
+
+  // ========== Get Attendance ==========
+  Future<List<dynamic>> getAttendance() async {
+    try {
+      final url = Uri.parse("${baseUrl}api/employee/attendance/");
+      final headers = await getHeaders();
+      final response = await http.get(url, headers: headers);
+
+      if (response.statusCode == 200) {
+        final decoded = json.decode(response.body);
+        return decoded["attendance"] ?? [];
+      }
+      return [];
+    } catch (e) {
+      print("Get Attendance Error: $e");
+      return [];
+    }
+  }
+
+  // ========== Mark Attendance ==========
+  Future<bool> markAttendance(String employeeId) async {
+    try {
+      final url = Uri.parse("${baseUrl}api/employee/mark-attendance/$employeeId/");
+      final headers = await getHeaders();
+      final response = await http.get(url, headers: headers);
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print("Mark Attendance Error: $e");
+      return false;
+    }
+  }
+
+  // ========== Mark All Attendance ==========
+  Future<bool> markAllAttendance() async {
+    try {
+      final url = Uri.parse("${baseUrl}api/employee/mark-all-attendance/");
+      final headers = await getHeaders();
+      final response = await http.get(url, headers: headers);
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print("Mark All Attendance Error: $e");
+      return false;
+    }
+  }
+
+  // ========== Get Attendance Data ==========
+  Future<Map<String, dynamic>?> getAttendanceData() async {
+    try {
+      final url = Uri.parse("${baseUrl}api/employee/attendance-summary/");
+      final headers = await getHeaders();
+      final response = await http.get(url, headers: headers);
+
+      print("📊 Attendance Summary Response: ${response.body}");
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        
+        // Handle different response formats
+        if (data is Map) {
+          return data['data'] ?? data;
+        }
+        return data;
+      }
+      return null;
+    } catch (e) {
+      print("❌ Attendance Data Error: $e");
+      return null;
+    }
+  }
+
+  // ========== Get Leave Balance ==========
+  Future<Map<String, dynamic>?> getLeaveBalance() async {
+    try {
+      final url = Uri.parse("${baseUrl}api/employee/leave-balance/");
+      final headers = await getHeaders();
+      final response = await http.get(url, headers: headers);
+
+      print("📊 Leave Balance Response: ${response.body}");
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        
+        // Handle different response formats
+        if (data is Map) {
+          return data['data'] ?? data;
+        }
+        return data;
+      }
+      return null;
+    } catch (e) {
+      print("❌ Leave Balance Error: $e");
+      return null;
+    }
+  }
+
+  // ========== Get Today's Attendance Status ==========
+  Future<Map<String, dynamic>?> getTodayAttendanceStatus() async {
+    try {
+      final url = Uri.parse("${baseUrl}api/employee/attendance-status/");
+      final headers = await getHeaders();
+      final response = await http.get(url, headers: headers);
+
+      print("📊 Today's Attendance Status: ${response.body}");
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return data;
+      }
+      return null;
+    } catch (e) {
+      print("❌ Attendance Status Error: $e");
+      return null;
+    }
+  }
+
+  // ========== Get Employee Dashboard Data ==========
+  Future<Map<String, dynamic>?> getDashboardData() async {
+    try {
+      final url = Uri.parse("${baseUrl}api/employee/dashboard/");
+      final headers = await getHeaders();
+      final response = await http.get(url, headers: headers);
+
+      print("📊 Dashboard Data Response: ${response.body}");
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        
+        // Handle different response formats
+        if (data is Map) {
+          return data['data'] ?? data;
+        }
+        return data;
+      }
+      return null;
+    } catch (e) {
+      print("❌ Dashboard Data Error: $e");
+      return null;
+    }
+  }
+
+  // ========== Get Recent Activities ==========
+  Future<List<dynamic>> getRecentActivities() async {
+    try {
+      final url = Uri.parse("${baseUrl}api/employee/recent-activities/");
+      final headers = await getHeaders();
+      final response = await http.get(url, headers: headers);
+
+      print("📊 Recent Activities Response: ${response.body}");
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        
+        // Handle different response formats
+        if (data is List) {
+          return data;
+        } else if (data is Map) {
+          return data['data'] ?? data['activities'] ?? [];
+        }
+        return [];
+      }
+      return [];
+    } catch (e) {
+      print("❌ Recent Activities Error: $e");
+      return [];
     }
   }
 }
